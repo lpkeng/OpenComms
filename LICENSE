@@ -1,0 +1,14 @@
+OpenComms is licensed per component. The full license texts are in the LICENSES/ folder.
+
+| Component                                          | License                         | Text                              |
+|----------------------------------------------------|---------------------------------|-----------------------------------|
+| Device firmware (beltpack, base station)           | GPL-3.0-or-later                | LICENSES/GPL-3.0-or-later.txt     |
+| Server, portal and other network services          | AGPL-3.0-or-later               | LICENSES/AGPL-3.0-or-later.txt    |
+| Hardware designs (hardware/: schematics, PCBs,     | CERN-OHL-S-2.0                  | LICENSES/CERN-OHL-S-2.0.txt       |
+|   enclosures, BOMs and hardware documentation)     |                                 |                                   |
+
+Where a file carries its own SPDX-License-Identifier header, that header applies.
+
+Third-party components (e.g. ESP-IDF, libopus, vendor examples) remain under their own licenses.
+
+Copyright (C) 2026 lpkeng and OpenComms contributors.
