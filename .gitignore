@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Portal API local database
+server/portal-api/data/
+
+# Node / web build
+node_modules/
+server/portal-web/dist/
+
+# Editors / OS
+.vscode/
+.DS_Store
+Thumbs.db
