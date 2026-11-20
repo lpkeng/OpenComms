@@ -14,7 +14,6 @@ from .schemas import DeviceEventConfigIn
 from .settings import KEYS
 
 DEFAULT_CHANNELS = ("Driver", "Engineers", "Pit Crew", "Team")
-TALK_MODES = ("latch", "momentary")
 
 
 class PlanError(Exception):
@@ -48,16 +47,16 @@ def active_event(db: Session, org_id: int) -> Event | None:
 
 
 def empty_keys() -> list[dict[str, Any]]:
-    return [{"key": k, "channel_id": None, "mode": "latch", "volume": 70} for k in KEYS]
+    return [{"key": k, "channel_id": None, "mode": "talk", "volume": 70} for k in KEYS]
 
 
 def talk_channels(keys: list[dict[str, Any]]) -> list[int]:
-    return [k["channel_id"] for k in keys if k["channel_id"] is not None and k["mode"] in TALK_MODES]
+    return [k["channel_id"] for k in keys if k["channel_id"] is not None and k["mode"] == "talk"]
 
 
 def member_channels(keys: list[dict[str, Any]]) -> list[int]:
-    """Channels the device hears (talk or listen-only keys). Keys set to "off" don't count."""
-    return [k["channel_id"] for k in keys if k["channel_id"] is not None and k["mode"] != "off"]
+    """Channels the device hears: every assigned key, talk or listen-only."""
+    return [k["channel_id"] for k in keys if k["channel_id"] is not None]
 
 
 def get_event_config(db: Session, device: Device, event: Event) -> DeviceEventConfig:
@@ -69,7 +68,7 @@ def get_event_config(db: Session, device: Device, event: Event) -> DeviceEventCo
     ).first()
     if dec is None:
         dec = DeviceEventConfig(
-            device_id=device.id, event_id=event.id, keys=empty_keys(), ptt_channel_ids=[], call_channel_id=None
+            device_id=device.id, event_id=event.id, keys=empty_keys(), ptt_channel_id=None, call_channel_id=None
         )
         db.add(dec)
         db.flush()
@@ -84,7 +83,7 @@ def plan_entry(dec: DeviceEventConfig, event: Event) -> dict[str, Any]:
     return {
         "device_id": dec.device_id,
         "keys": keys,
-        "ptt_channel_ids": [c for c in dec.ptt_channel_ids if c in talk],
+        "ptt_channel_id": dec.ptt_channel_id if dec.ptt_channel_id in talk else None,
         "call_channel_id": dec.call_channel_id if dec.call_channel_id in member else None,
         "mic_gain_db": dec.mic_gain_db,
         "sidetone": dec.sidetone,
@@ -96,17 +95,17 @@ def apply_config(dec: DeviceEventConfig, event: Event, body: DeviceEventConfigIn
     valid = {c.id for c in event.channels}
     keys = [k.model_dump() for k in body.keys]
     assigned = [k["channel_id"] for k in keys if k["channel_id"] is not None]
-    used = set(assigned) | set(body.ptt_channel_ids) | ({body.call_channel_id} - {None})
+    used = set(assigned) | ({body.ptt_channel_id, body.call_channel_id} - {None})
     if not used <= valid:
         raise PlanError(422, "Channel not in this event")
     if len(assigned) != len(set(assigned)):
         raise PlanError(422, "Each channel can only be on one key")
-    if not set(body.ptt_channel_ids) <= set(talk_channels(keys)):
-        raise PlanError(422, "Headset PTT can only talk on channels this device can talk on")
+    if body.ptt_channel_id is not None and body.ptt_channel_id not in talk_channels(keys):
+        raise PlanError(422, "Headset PTT can only talk on a channel this device can talk on")
     if body.call_channel_id is not None and body.call_channel_id not in member_channels(keys):
         raise PlanError(422, "The call key can only send to a channel this device is on")
     dec.keys = keys
-    dec.ptt_channel_ids = list(dict.fromkeys(body.ptt_channel_ids))
+    dec.ptt_channel_id = body.ptt_channel_id
     dec.call_channel_id = body.call_channel_id
     dec.mic_gain_db = body.mic_gain_db
     dec.sidetone = body.sidetone
@@ -133,7 +132,7 @@ def set_membership(
 
     if role == "none":
         if idx is not None:
-            keys[idx] = {**keys[idx], "channel_id": None, "mode": "latch"}
+            keys[idx] = {**keys[idx], "channel_id": None, "mode": "talk"}
     else:
         if idx is None:
             if src is not None:
@@ -144,26 +143,25 @@ def set_membership(
                 raise PlanError(
                     409, f"{who} already uses all {len(keys)} keys. Take them off another channel first."
                 )
-        current = keys[idx]["mode"]
-        mode = "listen_only" if role == "listen" else (current if current in TALK_MODES else "latch")
-        keys[idx] = {**keys[idx], "channel_id": channel_id, "mode": mode}
+        keys[idx] = {**keys[idx], "channel_id": channel_id, "mode": "listen_only" if role == "listen" else "talk"}
         if src is not None:  # already on the target channel: just drop the source channel
-            keys[src] = {**keys[src], "channel_id": None, "mode": "latch"}
+            keys[src] = {**keys[src], "channel_id": None, "mode": "talk"}
 
-    ptt = list(dec.ptt_channel_ids)
+    ptt = dec.ptt_channel_id
     call = dec.call_channel_id
     if moving:  # PTT and call targets follow the moved key
-        ptt = [channel_id if c == move_from else c for c in ptt]
+        ptt = channel_id if ptt == move_from else ptt
         call = channel_id if call == move_from else call
     talk, member = talk_channels(keys), member_channels(keys)
-    ptt = list(dict.fromkeys(c for c in ptt if c in talk))
-    if role == "talk" and not ptt:
-        ptt = [channel_id]
+    if ptt not in talk:
+        ptt = None
+    if role == "talk" and ptt is None:
+        ptt = channel_id
     if call not in member:
         call = member[0] if member else None
 
     dec.keys = keys
-    dec.ptt_channel_ids = ptt
+    dec.ptt_channel_id = ptt
     dec.call_channel_id = call
 
 
@@ -181,7 +179,7 @@ def copy_event(db: Session, source: Event, target: Event) -> None:
                 device_id=dec.device_id,
                 event_id=target.id,
                 keys=[{**k, "channel_id": id_map.get(k["channel_id"])} for k in dec.keys],
-                ptt_channel_ids=[id_map[c] for c in dec.ptt_channel_ids if c in id_map],
+                ptt_channel_id=id_map.get(dec.ptt_channel_id) if dec.ptt_channel_id is not None else None,
                 call_channel_id=id_map.get(dec.call_channel_id) if dec.call_channel_id is not None else None,
                 mic_gain_db=dec.mic_gain_db,
                 sidetone=dec.sidetone,
@@ -203,7 +201,7 @@ def build_config(db: Session, device: Device) -> dict[str, Any]:
         "event": None,
         "channels": [],
         "keys": empty_keys(),
-        "ptt_channel_ids": [],
+        "ptt_channel_id": None,
         "call_channel_id": None,
         "mic_gain_db": 52,
         "sidetone": 20,

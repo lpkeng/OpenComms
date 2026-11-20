@@ -21,7 +21,7 @@ export interface Membership {
 
 export function memberships(entry: PlanEntry): Membership[] {
   return entry.keys.flatMap((k) =>
-    k.channel_id == null || k.mode === 'off'
+    k.channel_id == null
       ? []
       : [{ channelId: k.channel_id, role: k.mode === 'listen_only' ? ('listen' as const) : ('talk' as const), key: k.key }],
   )
@@ -72,7 +72,23 @@ export const freeKeys = (p: Person) => p.entry.keys.filter((k) => k.channel_id =
 export const canJoin = (p: Person, channelId: number) =>
   p.entry.keys.some((k) => k.channel_id === channelId) || freeKeys(p) > 0
 
-export const hasPtt = (p: Person, channelId: number) => p.entry.ptt_channel_ids.includes(channelId)
+export interface HeadsetPtt {
+  channelId: number | null
+  /** The wearer moved it on the beltpack, so it differs from `planned`. */
+  remapped: boolean
+  planned: number | null
+}
+
+/** Where the headset PTT talks: the plan's channel, or the beltpack's own remap on the live event. */
+export function headsetPtt(model: PlanModel, p: Person): HeadsetPtt {
+  const planned = p.entry.ptt_channel_id
+  const reported = p.device.state?.ptt_channel_id
+  // Only trust the device once it runs the latest config, or a pending push would look like a remap.
+  if (model.live && p.device.online && p.device.in_sync && reported !== undefined && reported !== planned) {
+    return { channelId: reported, remapped: true, planned }
+  }
+  return { channelId: planned, remapped: false, planned }
+}
 
 /** Talking on this channel right now (live state, active event only). */
 export function talkingOn(model: PlanModel, p: Person, channelId: number): boolean {

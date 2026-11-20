@@ -6,7 +6,7 @@ import {
   channelWarning,
   displayName,
   freeKeys,
-  hasPtt,
+  headsetPtt,
   membershipOn,
   talkingOn,
   type ChannelInfo,
@@ -17,6 +17,7 @@ import {
 import type { Role } from '../types'
 import type { SetRole } from './CommsPlan'
 import InlineName from './InlineName'
+import PttBadge from './PttBadge'
 
 interface Props {
   model: PlanModel
@@ -68,6 +69,7 @@ function Chip({ person, ch, role, model, selected, onSelect, setRole, onDragStar
   const m = membershipOn(person, ch.channel.id)
   const name = displayName(person.device)
   const other: Role = role === 'talk' ? 'listen' : 'talk'
+  const ptt = headsetPtt(model, person)
   const notes = [
     person.device.muted && 'muted by admin',
     person.device.disabled && 'disabled',
@@ -86,11 +88,7 @@ function Chip({ person, ch, role, model, selected, onSelect, setRole, onDragStar
     >
       <RoleIcon role={role} muted={person.device.muted} />
       <span className="chip-name">{name}</span>
-      {hasPtt(person, ch.channel.id) && (
-        <span className="ptt-badge" title="Headset PTT talks here">
-          PTT
-        </span>
-      )}
+      {ptt.channelId === ch.channel.id && <PttBadge model={model} ptt={ptt} />}
       <span className="key-badge" title={`On key ${m?.key}`}>
         {m?.key}
       </span>

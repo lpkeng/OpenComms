@@ -317,8 +317,7 @@ table.devices code,
 .key.talk b {
   color: #fff;
 }
-.key.unassigned,
-.key.off {
+.key.unassigned {
   opacity: 0.45;
 }
 
@@ -491,6 +490,9 @@ table.devices code,
   border: 1px solid var(--warn);
   color: var(--warn);
   margin-left: 4px;
+}
+.ptt-badge.remapped {
+  border-style: dashed;
 }
 .talking-swatch {
   display: inline-block;
@@ -684,6 +686,11 @@ label.check.inline {
 .note.bad {
   color: #ffb4b6;
   background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+.note.info {
+  color: #b9dcff;
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  flex-wrap: wrap;
 }
 .ch-title .swatch {
   width: 14px;

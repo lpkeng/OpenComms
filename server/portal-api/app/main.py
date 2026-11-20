@@ -210,7 +210,8 @@ def create_app(
         e = get_event(db, c.event_id)
         for dec in db.scalars(select(DeviceEventConfig).where(DeviceEventConfig.event_id == e.id)):
             dec.keys = [{**k, "channel_id": None if k["channel_id"] == c.id else k["channel_id"]} for k in dec.keys]
-            dec.ptt_channel_ids = [x for x in dec.ptt_channel_ids if x != c.id]
+            if dec.ptt_channel_id == c.id:
+                dec.ptt_channel_id = None
             if dec.call_channel_id == c.id:
                 dec.call_channel_id = None
         db.delete(c)
@@ -399,7 +400,7 @@ def create_app(
 
         @app.post("/api/dev/provision", status_code=201)
         def provision(body: schemas.ProvisionIn, db: Session = Depends(get_db)):
-            """Stand-in for the USB provisioning tool + CA (dev only)."""
+            """Stand-in for QR code + Bluetooth adoption (dev only)."""
             prov = db.get(ProvisionedDevice, body.id)
             if prov is None:
                 db.add(ProvisionedDevice(id=body.id, kind=body.kind, claim_code=body.claim_code))

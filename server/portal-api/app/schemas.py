@@ -5,9 +5,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from .settings import KEYS
 
-KeyMode = Literal["latch", "momentary", "listen_only", "off"]
+# Talk keys are always hold-to-talk (no latching), and always hear their channel too.
+KeyMode = Literal["talk", "listen_only"]
 Role = Literal["talk", "listen", "none"]
-Command = Literal["call", "identify", "reboot"]
+# reset_ptt: drop a headset PTT remap made on the beltpack and go back to the plan's channel.
+Command = Literal["call", "identify", "reboot", "reset_ptt"]
 
 
 class EventIn(BaseModel):
@@ -52,7 +54,7 @@ class AdminUpdate(BaseModel):
 class KeyConfig(BaseModel):
     key: Literal["A", "B", "C", "D"]
     channel_id: int | None = None
-    mode: KeyMode = "latch"
+    mode: KeyMode = "talk"
     volume: int = Field(default=70, ge=0, le=100)
 
 
@@ -60,7 +62,7 @@ class DeviceEventConfigIn(BaseModel):
     name: str | None = Field(default=None, max_length=50)
     label: str | None = Field(default=None, max_length=50)
     keys: list[KeyConfig]
-    ptt_channel_ids: list[int] = []
+    ptt_channel_id: int | None = None
     call_channel_id: int | None = None
     mic_gain_db: int = Field(default=52, ge=0, le=59)
     sidetone: int = Field(default=20, ge=0, le=100)

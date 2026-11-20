@@ -49,7 +49,7 @@ def test_claim_requires_correct_code_and_pushes_first_config(ctx):
     assert [k["key"] for k in cfg["keys"]] == ["A", "B", "C", "D"]
     # New devices start on no channels: nobody can talk anywhere until the comms plan says so.
     assert all(k["channel_id"] is None for k in cfg["keys"])
-    assert cfg["ptt_channel_ids"] == [] and cfg["call_channel_id"] is None
+    assert cfg["ptt_channel_id"] is None and cfg["call_channel_id"] is None
     assert claim(client).status_code == 409
 
 
@@ -59,12 +59,12 @@ def test_config_change_bumps_version_and_tracks_device_sync(ctx):
     chans = client.get("/api/events").json()[0]["channels"]
     body = {
         "keys": [
-            {"key": "A", "channel_id": chans[1]["id"], "mode": "momentary", "volume": 40},
-            {"key": "B", "channel_id": None, "mode": "latch", "volume": 70},
+            {"key": "A", "channel_id": chans[1]["id"], "mode": "talk", "volume": 40},
+            {"key": "B", "channel_id": None, "mode": "talk", "volume": 70},
             {"key": "C", "channel_id": chans[2]["id"], "mode": "listen_only", "volume": 70},
-            {"key": "D", "channel_id": chans[3]["id"], "mode": "off", "volume": 70},
+            {"key": "D", "channel_id": chans[3]["id"], "mode": "listen_only", "volume": 70},
         ],
-        "ptt_channel_ids": [chans[1]["id"]],
+        "ptt_channel_id": chans[1]["id"],
         "call_channel_id": chans[1]["id"],
         "mic_gain_db": 55,
         "sidetone": 10,
@@ -73,7 +73,7 @@ def test_config_change_bumps_version_and_tracks_device_sync(ctx):
     assert r.status_code == 200
     cfg = pub.last_config("bp-001")
     assert cfg["version"] == 2
-    assert cfg["keys"][0] == {"key": "A", "channel_id": chans[1]["id"], "mode": "momentary", "volume": 40}
+    assert cfg["keys"][0] == {"key": "A", "channel_id": chans[1]["id"], "mode": "talk", "volume": 40}
 
     assert client.get("/api/devices").json()[0]["in_sync"] is False
     app.state.store.update("bp-001", state={"config_version": 2})
@@ -90,12 +90,13 @@ def test_config_validation(ctx):
         body = {"keys": [{"key": k, "channel_id": c, "mode": m} for k, (c, m) in zip("ABCD", keys)], **extra}
         return client.put("/api/devices/bp-001/config", json=body)
 
-    free = (None, "latch")
-    assert put([(99999, "latch"), free, free, free]).status_code == 422  # not in the event
+    free = (None, "talk")
+    assert put([(99999, "talk"), free, free, free]).status_code == 422  # not in the event
+    assert put([(chans[0], "latch"), free, free, free]).status_code == 422  # talk keys are hold-to-talk only
     assert client.put("/api/devices/bp-001/config", json={"keys": [{"key": "A"}]}).status_code == 422
-    assert put([(chans[0], "latch"), (chans[0], "listen_only"), free, free]).status_code == 422  # same channel twice
+    assert put([(chans[0], "talk"), (chans[0], "listen_only"), free, free]).status_code == 422  # same channel twice
     listen_only = [(chans[0], "listen_only"), free, free, free]
-    r = put(listen_only, ptt_channel_ids=[chans[0]])
+    r = put(listen_only, ptt_channel_id=chans[0])
     assert r.status_code == 422 and "PTT" in r.json()["detail"]  # PTT can't talk on a listen-only channel
     assert put(listen_only, call_channel_id=chans[1]).status_code == 422  # call to a channel it isn't on
     assert put(listen_only, call_channel_id=chans[0]).status_code == 200
@@ -113,30 +114,30 @@ def test_membership_allocates_keys_and_keeps_ptt_and_call_consistent(ctx):
 
     r = member(chans[0], "talk")
     entry = r.json()
-    assert entry["keys"][0]["channel_id"] == chans[0] and entry["keys"][0]["mode"] == "latch"
-    assert entry["ptt_channel_ids"] == [chans[0]] and entry["call_channel_id"] == chans[0]
+    assert entry["keys"][0]["channel_id"] == chans[0] and entry["keys"][0]["mode"] == "talk"
+    assert entry["ptt_channel_id"] == chans[0] and entry["call_channel_id"] == chans[0]
     assert pub.last_config("bp-001")["keys"][0]["channel_id"] == chans[0]  # active event: pushed live
 
     entry = member(chans[1], "listen").json()
     assert entry["keys"][1] == {"key": "B", "channel_id": chans[1], "mode": "listen_only", "volume": 70}
-    assert entry["ptt_channel_ids"] == [chans[0]]
+    assert entry["ptt_channel_id"] == chans[0]
 
     # Demoting to listen-only removes PTT there; the call key stays (still on the channel).
     entry = member(chans[0], "listen").json()
     assert entry["keys"][0]["mode"] == "listen_only"
-    assert entry["ptt_channel_ids"] == [] and entry["call_channel_id"] == chans[0]
+    assert entry["ptt_channel_id"] is None and entry["call_channel_id"] == chans[0]
 
     # Dragging between channels re-patches the same key, and PTT/call follow it.
     member(chans[0], "talk")
     entry = member(chans[2], "talk", move_from_channel_id=chans[0]).json()
     assert entry["keys"][0]["channel_id"] == chans[2]
     assert chans[0] not in [k["channel_id"] for k in entry["keys"]]
-    assert entry["ptt_channel_ids"] == [chans[2]] and entry["call_channel_id"] == chans[2]
+    assert entry["ptt_channel_id"] == chans[2] and entry["call_channel_id"] == chans[2]
 
     # Removing the call channel falls back to another channel the device is on.
     entry = member(chans[2], "none").json()
     assert entry["keys"][0]["channel_id"] is None
-    assert entry["ptt_channel_ids"] == [] and entry["call_channel_id"] == chans[1]
+    assert entry["ptt_channel_id"] is None and entry["call_channel_id"] == chans[1]
 
     # A beltpack has 4 keys, so it can be on at most 4 channels.
     extra = client.post(f"/api/events/{event['id']}/channels", json={"name": "Spare"}).json()["channels"][-1]["id"]
@@ -166,8 +167,8 @@ def test_inactive_event_plan_is_saved_but_only_pushed_on_activation(ctx):
     client.post(f"/api/events/{race['id']}/activate")
     cfg = pub.last_config("bp-001")
     assert cfg["event"]["name"] == "Race Day"
-    assert cfg["keys"][0] == {"key": "A", "channel_id": race_driver, "mode": "latch", "volume": 70}
-    assert cfg["ptt_channel_ids"] == [race_driver]
+    assert cfg["keys"][0] == {"key": "A", "channel_id": race_driver, "mode": "talk", "volume": 70}
+    assert cfg["ptt_channel_id"] == race_driver
 
 
 def test_deleting_channel_unassigns_it_and_repushes(ctx):
@@ -181,7 +182,7 @@ def test_deleting_channel_unassigns_it_and_repushes(ctx):
     assert client.delete(f"/api/channels/{first}").status_code == 204
     cfg = pub.last_config("bp-001")
     assert cfg["keys"][0]["channel_id"] is None
-    assert first not in cfg["ptt_channel_ids"] and cfg["call_channel_id"] is None
+    assert cfg["ptt_channel_id"] is None and cfg["call_channel_id"] is None
     assert all(c["id"] != first for c in cfg["channels"])
 
 

@@ -8,6 +8,7 @@ Each simulated device speaks the real control-plane protocol (docs/architecture.
   oc/dev/{id}/state   status reports            (published)
 
 Devices it claims are named and put on channels as a motorsport crew (--scenario none to skip).
+--remap-ptt bp-001=Engineers simulates the wearer remapping their headset PTT on the beltpack.
 
 Usage:  python tools/device-sim/sim.py --count 6
 """
@@ -26,15 +27,18 @@ import paho.mqtt.client as mqtt
 
 # Pit lane, Sydney Motorsport Park
 BASE_LAT, BASE_LON = -33.8037, 150.8705
-TALK_MODES = {"latch", "momentary"}
 
 
 class SimBeltpack:
-    def __init__(self, device_id: str, host: str, port: int, rng: random.Random) -> None:
+    def __init__(self, device_id: str, host: str, port: int, rng: random.Random, remap_ptt: str | None = None) -> None:
         self.id = device_id
         self.rng = rng
         self.lock = threading.Lock()
         self.config: dict | None = None
+        # Headset PTT remapped on the beltpack (kept in NVS on real hardware): the chosen channel, plus the
+        # event and the portal's PTT channel at the time, so an admin change can be detected later.
+        self.ptt_override: dict | None = None
+        self.pending_remap = remap_ptt  # channel name the simulated wearer remaps to, once
         self.battery = rng.uniform(55, 100)
         self.charging = rng.random() < 0.15
         self.rssi = rng.uniform(-95, -70)
@@ -72,6 +76,7 @@ class SimBeltpack:
             with self.lock:
                 self.config = json.loads(msg.payload) if msg.payload else None
                 self.talk_key = None
+                self._apply_ptt_rules()
             v = self.config["version"] if self.config else "-"
             print(f"[{self.id}] applied config v{v}")
         elif leaf == "cmd":
@@ -85,14 +90,38 @@ class SimBeltpack:
                 elif cmd == "reboot":
                     self.started = now
                     self.talk_key = None
+                elif cmd == "reset_ptt":
+                    self.ptt_override = None
             print(f"[{self.id}] command: {cmd}")
         self.publish_state()
+
+    def _talk_channels(self) -> list[int]:
+        cfg = self.config
+        return [k["channel_id"] for k in cfg["keys"] if k["channel_id"] is not None and k["mode"] == "talk"] if cfg else []
+
+    def _apply_ptt_rules(self) -> None:
+        """Firmware rule: a headset PTT remap made on the beltpack sticks until an admin changes this device's
+        PTT in the portal (or sends reset_ptt), the event changes, or that channel stops being a talk channel."""
+        cfg, override = self.config, self.ptt_override
+        event_id = cfg["event"]["id"] if cfg and cfg["event"] else None
+        if override and not (
+            event_id == override["event_id"]
+            and cfg["ptt_channel_id"] == override["base"]
+            and override["channel_id"] in self._talk_channels()
+        ):
+            self.ptt_override = None
+        if self.pending_remap and event_id is not None:
+            target = next((c["id"] for c in cfg["channels"] if c["name"] == self.pending_remap), None)
+            if target in self._talk_channels() and target != cfg["ptt_channel_id"]:
+                self.ptt_override = {"channel_id": target, "event_id": event_id, "base": cfg["ptt_channel_id"]}
+                print(f"[{self.id}] wearer remapped the headset PTT to {self.pending_remap} on the beltpack")
+                self.pending_remap = None
 
     def _can_talk(self) -> list[str]:
         cfg = self.config
         if not cfg or cfg["admin"]["muted"] or cfg["admin"]["disabled"]:
             return []
-        return [k["key"] for k in cfg["keys"] if k["channel_id"] is not None and k["mode"] in TALK_MODES]
+        return [k["key"] for k in cfg["keys"] if k["channel_id"] is not None and k["mode"] == "talk"]
 
     def tick(self, dt: float) -> None:
         now = time.time()
@@ -124,10 +153,12 @@ class SimBeltpack:
                 "net": "lte",
                 "rssi_dbm": round(self.rssi),
                 "gps": {"fix": True, "lat": round(self.lat, 6), "lon": round(self.lon, 6)},
-                "listen": [k["key"] for k in cfg["keys"] if k["channel_id"] is not None and k["mode"] != "off"]
+                "listen": [k["key"] for k in cfg["keys"] if k["channel_id"] is not None]
                 if cfg and not cfg["admin"]["disabled"]
                 else [],
                 "talk": [self.talk_key] if self.talk_key else [],
+                # The headset PTT channel actually in use, which differs from the plan after a remap.
+                "ptt_channel_id": (self.ptt_override or {}).get("channel_id", cfg["ptt_channel_id"]) if cfg else None,
                 "alert": now < self.alert_until,
                 "identify": now < self.identify_until,
                 "uptime_s": int(now - self.started),
@@ -181,14 +212,14 @@ def apply_scenario(api: str, newly_claimed: list[str]) -> None:
         if not set(roles) <= set(channel_ids):
             print(f"  (scenario skipped for {device_id}: event lacks channels {sorted(set(roles) - set(channel_ids))})")
             continue
-        keys = [{"key": k, "channel_id": None, "mode": "latch", "volume": 70} for k in "ABCD"]
+        keys = [{"key": k, "channel_id": None, "mode": "talk", "volume": 70} for k in "ABCD"]
         for key, (channel, role) in zip(keys, roles.items()):
-            key.update(channel_id=channel_ids[channel], mode="latch" if role == "talk" else "listen_only")
+            key.update(channel_id=channel_ids[channel], mode="talk" if role == "talk" else "listen_only")
         body = {
             "name": name,
             "label": label,
             "keys": keys,
-            "ptt_channel_ids": [channel_ids[ptt]],
+            "ptt_channel_id": channel_ids[ptt],
             "call_channel_id": channel_ids[ptt],
         }
         status, detail = api_call(api, "PUT", f"/api/events/{event['id']}/plan/{device_id}", body)
@@ -207,8 +238,18 @@ def main() -> None:
         default="motorsport",
         help="name newly claimed devices and put them on channels (default: motorsport crew)",
     )
+    ap.add_argument(
+        "--remap-ptt",
+        action="append",
+        default=[],
+        metavar="DEVICE=CHANNEL",
+        help="simulate a wearer remapping their headset PTT on the beltpack, e.g. bp-001=Engineers (repeatable)",
+    )
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
+    if any("=" not in r for r in args.remap_ptt):
+        ap.error("--remap-ptt expects DEVICE=CHANNEL, e.g. bp-001=Engineers")
+    remaps = dict(r.split("=", 1) for r in args.remap_ptt)
 
     host, port = args.broker.split(":")
     rng = random.Random(args.seed)
@@ -233,7 +274,9 @@ def main() -> None:
         print("Setting up the demo crew:")
         apply_scenario(args.api, newly_claimed)
 
-    devices = [SimBeltpack(d, host, int(port), random.Random(f"{args.seed}-{d}")) for d in ids]
+    devices = [
+        SimBeltpack(d, host, int(port), random.Random(f"{args.seed}-{d}"), remap_ptt=remaps.get(d)) for d in ids
+    ]
     print(f"Running {len(devices)} simulated beltpacks. Ctrl+C to stop.")
     try:
         while True:

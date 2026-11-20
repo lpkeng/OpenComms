@@ -122,7 +122,7 @@ export default function CommsPlan({ events, devices, eventId, onEventChange, ref
           <span>
             <HeadphonesIcon /> Listen only
           </span>
-          <span>
+          <span title="Dashed: the wearer remapped it on the beltpack">
             <span className="ptt-badge">PTT</span> Headset PTT
           </span>
           <span>
@@ -175,6 +175,7 @@ export default function CommsPlan({ events, devices, eventId, onEventChange, ref
               selection={selection}
               onSelect={setSelection}
               onEdit={(deviceId) => onEdit(deviceId, model.event.id)}
+              onResetPtt={(deviceId) => void run(() => api.post(`/devices/${deviceId}/cmd`, { cmd: 'reset_ptt' }))}
             />
           </aside>
         </div>

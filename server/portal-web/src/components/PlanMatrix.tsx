@@ -5,7 +5,7 @@ import {
   channelWarning,
   displayName,
   freeKeys,
-  hasPtt,
+  headsetPtt,
   membershipOn,
   talkingOn,
   type PlanModel,
@@ -13,6 +13,7 @@ import {
 } from '../plan'
 import type { Role } from '../types'
 import type { SetRole } from './CommsPlan'
+import PttBadge from './PttBadge'
 
 interface Props {
   model: PlanModel
@@ -70,6 +71,7 @@ export default function PlanMatrix({ model, selection, onSelect, setRole }: Prop
             {model.people.map((p) => {
               const free = freeKeys(p)
               const name = displayName(p.device)
+              const ptt = headsetPtt(model, p)
               return (
                 <tr key={p.id} className={selectedPerson === p.id ? 'selected' : ''}>
                   <th scope="row">
@@ -118,7 +120,7 @@ export default function PlanMatrix({ model, selection, onSelect, setRole }: Prop
                         {m && (
                           <div className="cell-meta">
                             Key {m.key}
-                            {hasPtt(p, ch.channel.id) && <span className="ptt-badge">PTT</span>}
+                            {ptt.channelId === ch.channel.id && <PttBadge model={model} ptt={ptt} />}
                           </div>
                         )}
                       </td>

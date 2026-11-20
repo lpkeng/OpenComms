@@ -58,13 +58,12 @@ function KeyChips({ device, activeEvent }: { device: Device; activeEvent: OcEven
         return (
           <span
             key={k.key}
-            className={`key ${live} ${name ? '' : 'unassigned'} ${k.mode === 'off' ? 'off' : ''}`}
+            className={`key ${live} ${name ? '' : 'unassigned'}`}
             style={color ? { borderLeftColor: color } : undefined}
-            title={`Key ${k.key}: ${name ?? 'unassigned'} (${k.mode.replace('_', ' ')}, vol ${k.volume})`}
+            title={`Key ${k.key}: ${name ?? 'unassigned'}${name ? (k.mode === 'talk' ? ' (talk & listen)' : ' (listen only)') : ''}, vol ${k.volume}`}
           >
             <b>{k.key}</b>{' '}
-            {name && k.mode === 'listen_only' && <HeadphonesIcon size={11} />}
-            {name && (k.mode === 'latch' || k.mode === 'momentary') && <MicIcon size={11} />} {name ?? '—'}
+            {name && (k.mode === 'talk' ? <MicIcon size={11} /> : <HeadphonesIcon size={11} />)} {name ?? '—'}
           </span>
         )
       })}

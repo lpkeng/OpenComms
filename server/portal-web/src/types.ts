@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 export type KeyName = 'A' | 'B' | 'C' | 'D'
-export type KeyMode = 'latch' | 'momentary' | 'listen_only' | 'off'
-export type Command = 'call' | 'identify' | 'reboot'
+/** Talk keys are hold-to-talk and also hear their channel; listen-only keys can't talk. */
+export type KeyMode = 'talk' | 'listen_only'
+export type Command = 'call' | 'identify' | 'reboot' | 'reset_ptt'
 
 export interface Channel {
   id: number
@@ -37,7 +38,7 @@ export interface DeviceConfig {
   event: { id: number; name: string } | null
   channels: Channel[]
   keys: KeyConfig[]
-  ptt_channel_ids: number[]
+  ptt_channel_id: number | null
   call_channel_id: number | null
   mic_gain_db: number
   sidetone: number
@@ -55,6 +56,8 @@ export interface DeviceState {
   gps: { fix: boolean; lat: number; lon: number }
   listen: KeyName[]
   talk: KeyName[]
+  /** Headset PTT channel in use; differs from the plan if the wearer remapped it on the beltpack. */
+  ptt_channel_id?: number | null
   alert: boolean
   identify: boolean
   uptime_s: number
@@ -95,7 +98,7 @@ export type Role = 'talk' | 'listen'
 export interface PlanEntry {
   device_id: string
   keys: KeyConfig[]
-  ptt_channel_ids: number[]
+  ptt_channel_id: number | null
   call_channel_id: number | null
   mic_gain_db: number
   sidetone: number

@@ -5,7 +5,7 @@ import {
   canTalk,
   channelWarning,
   displayName,
-  hasPtt,
+  headsetPtt,
   heardBy,
   hears,
   membershipOn,
@@ -15,21 +15,21 @@ import {
   type Selection,
 } from '../plan'
 import type { KeyMode } from '../types'
+import PttBadge from './PttBadge'
 
 interface Props {
   model: PlanModel
   selection: Selection
   onSelect: (s: Selection) => void
   onEdit: (deviceId: string) => void
+  onResetPtt: (deviceId: string) => void
 }
 
 type Select = (s: Selection) => void
 
 const MODE_TEXT: Record<KeyMode, string> = {
-  latch: 'talk & listen (latch)',
-  momentary: 'talk & listen (hold to talk)',
+  talk: 'talk & listen (hold to talk)',
   listen_only: 'listen only',
-  off: 'key switched off',
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -63,7 +63,15 @@ function ChannelTag({ ch, onSelect }: { ch: ChannelInfo; onSelect: Select }) {
   )
 }
 
-function PersonSummary({ p, model, onSelect, onEdit }: { p: Person; model: PlanModel; onSelect: Select; onEdit: () => void }) {
+interface PersonSummaryProps {
+  p: Person
+  model: PlanModel
+  onSelect: Select
+  onEdit: () => void
+  onResetPtt: () => void
+}
+
+function PersonSummary({ p, model, onSelect, onEdit, onResetPtt }: PersonSummaryProps) {
   const d = p.device
   const name = displayName(d)
   const channel = (id: number | null) => model.channels.find((c) => c.channel.id === id)
@@ -73,7 +81,9 @@ function PersonSummary({ p, model, onSelect, onEdit }: { p: Person; model: PlanM
   const heardByList = heardBy(model, p)
   const talksSomewhere = p.memberships.some((m) => m.role === 'talk')
   const listenOnly = p.memberships.filter((m) => m.role === 'listen').flatMap((m) => channel(m.channelId) ?? [])
-  const ptt = p.entry.ptt_channel_ids.flatMap((id) => channel(id) ?? [])
+  const ptt = headsetPtt(model, p)
+  const pttChannel = channel(ptt.channelId)
+  const plannedPtt = channel(ptt.planned)
   const call = channel(p.entry.call_channel_id)
 
   return (
@@ -113,11 +123,7 @@ function PersonSummary({ p, model, onSelect, onEdit }: { p: Person; model: PlanM
           {heardByList.map(({ ch, by }) => (
             <li key={ch.channel.id}>
               {tag(ch)} → {by.length ? people(by) : <span className="muted">nobody else is on it</span>}
-              {hasPtt(p, ch.channel.id) && (
-                <span className="ptt-badge" title="Headset PTT talks here">
-                  PTT
-                </span>
-              )}
+              {ptt.channelId === ch.channel.id && <PttBadge model={model} ptt={ptt} />}
             </li>
           ))}
         </ul>
@@ -147,10 +153,19 @@ function PersonSummary({ p, model, onSelect, onEdit }: { p: Person; model: PlanM
         })}
       </ul>
       <p className="small">
-        Headset PTT talks on: {ptt.length ? joinList(ptt.map(tag)) : <span className="muted">nothing</span>}
+        Headset PTT talks on: {pttChannel ? tag(pttChannel) : <span className="muted">nothing</span>}
         <br />
         Call button alerts: {call ? tag(call) : <span className="muted">nobody</span>}
       </p>
+      {ptt.remapped && (
+        <div className="note info">
+          <span>
+            {name} remapped their headset PTT on the beltpack (plan: {plannedPtt ? tag(plannedPtt) : 'nothing'}). It
+            stays until you change their PTT here or reset it.
+          </span>
+          <button onClick={onResetPtt}>Reset to plan</button>
+        </div>
+      )}
       <button onClick={onEdit}>Edit keys &amp; audio…</button>
     </>
   )
@@ -165,7 +180,8 @@ function ChannelSummary({ ch, model, onSelect }: { ch: ChannelInfo; model: PlanM
   const row = (p: Person) => {
     const m = membershipOn(p, ch.channel.id)!
     const notes = [`key ${m.key}`]
-    if (hasPtt(p, ch.channel.id)) notes.push('headset PTT')
+    const ptt = headsetPtt(model, p)
+    if (ptt.channelId === ch.channel.id) notes.push(ptt.remapped ? 'headset PTT (remapped on the beltpack)' : 'headset PTT')
     if (m.role === 'talk' && !canTalk(p)) notes.push(p.device.disabled ? 'disabled' : 'muted')
     else if (p.device.disabled) notes.push('disabled')
     if (!p.device.online) notes.push('offline')
@@ -229,6 +245,13 @@ function Overview({ model, onSelect }: { model: PlanModel; onSelect: Select }) {
           <PersonLink p={p} onSelect={onSelect} /> is {p.device.disabled ? 'disabled' : 'muted'} by an admin
         </>
       )),
+    ...model.people
+      .filter((p) => headsetPtt(model, p).remapped)
+      .map((p) => (
+        <>
+          <PersonLink p={p} onSelect={onSelect} /> remapped their headset PTT on the beltpack
+        </>
+      )),
   ]
   const keys = model.people[0]?.entry.keys.length ?? 4
   return (
@@ -243,7 +266,8 @@ function Overview({ model, onSelect }: { model: PlanModel; onSelect: Select }) {
           <HeadphonesIcon /> <b>Listen only</b>: hears the channel but can't talk on it.
         </li>
         <li>
-          <span className="ptt-badge">PTT</span> The headset's push-to-talk button talks on this channel.
+          <span className="ptt-badge">PTT</span> The headset's push-to-talk button talks on this channel. Dashed means
+          the wearer remapped it on the beltpack.
         </li>
         <li>Each beltpack has {keys} channel keys, so a person can be on up to {keys} channels.</li>
       </ul>
@@ -263,10 +287,20 @@ function Overview({ model, onSelect }: { model: PlanModel; onSelect: Select }) {
   )
 }
 
-export default function PlanSummary({ model, selection, onSelect, onEdit }: Props) {
+export default function PlanSummary({ model, selection, onSelect, onEdit, onResetPtt }: Props) {
   if (selection?.kind === 'person') {
     const p = model.people.find((x) => x.id === selection.id)
-    if (p) return <PersonSummary p={p} model={model} onSelect={onSelect} onEdit={() => onEdit(p.id)} />
+    if (p) {
+      return (
+        <PersonSummary
+          p={p}
+          model={model}
+          onSelect={onSelect}
+          onEdit={() => onEdit(p.id)}
+          onResetPtt={() => onResetPtt(p.id)}
+        />
+      )
+    }
   }
   if (selection?.kind === 'channel') {
     const ch = model.channels.find((c) => c.channel.id === selection.id)

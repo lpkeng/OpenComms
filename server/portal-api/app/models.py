@@ -47,10 +47,10 @@ class Channel(Base):
 
 
 class ProvisionedDevice(Base):
-    """Devices known to the provisioning system (certificate issued + claim code).
+    """Devices that can be claimed with a claim code (development stand-in for adoption).
 
-    In production this is populated by the USB provisioning tool when the device's
-    certificate is signed. Claim codes are never sent over MQTT.
+    In production a beltpack is adopted by scanning its QR code (ID, key fingerprint and a
+    one-time pairing code) from the team's dashboard. Claim codes are never sent over MQTT.
     """
 
     __tablename__ = "provisioned_devices"
@@ -88,9 +88,9 @@ class DeviceEventConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"))
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"))
-    # [{"key": "A", "channel_id": 1 | None, "mode": "latch", "volume": 70}, ...]
+    # [{"key": "A", "channel_id": 1 | None, "mode": "talk" | "listen_only", "volume": 70}, ...]
     keys: Mapped[list] = mapped_column(JSON, default=list)
-    ptt_channel_ids: Mapped[list] = mapped_column(JSON, default=list)
+    ptt_channel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     call_channel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mic_gain_db: Mapped[int] = mapped_column(Integer, default=52)
     sidetone: Mapped[int] = mapped_column(Integer, default=20)

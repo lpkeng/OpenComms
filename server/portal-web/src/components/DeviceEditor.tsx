@@ -13,20 +13,17 @@ interface Props {
 }
 
 const MODES: { value: KeyMode; label: string }[] = [
-  { value: 'latch', label: 'Talk & listen: latch (tap on/off, hold = momentary)' },
-  { value: 'momentary', label: 'Talk & listen: momentary (hold to talk)' },
+  { value: 'talk', label: 'Talk & listen (hold to talk)' },
   { value: 'listen_only', label: 'Listen only' },
-  { value: 'off', label: 'Off' },
 ]
-
-const isTalk = (m: KeyMode) => m === 'latch' || m === 'momentary'
 
 export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
   const [device, setDevice] = useState<Device | null>(null)
   const [name, setName] = useState('')
   const [label, setLabel] = useState('')
   const [keys, setKeys] = useState<KeyConfig[]>([])
-  const [ptt, setPtt] = useState<number[]>([])
+  const [ptt, setPtt] = useState<number | null>(null)
+  const [savedPtt, setSavedPtt] = useState<number | null>(null)
   const [callCh, setCallCh] = useState<number | null>(null)
   const [micGain, setMicGain] = useState(52)
   const [sidetone, setSidetone] = useState(20)
@@ -46,7 +43,8 @@ export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
       const entry = plan?.devices.find((x) => x.device_id === deviceId)
       if (entry) {
         setKeys(entry.keys)
-        setPtt(entry.ptt_channel_ids)
+        setPtt(entry.ptt_channel_id)
+        setSavedPtt(entry.ptt_channel_id)
         setCallCh(entry.call_channel_id)
         setMicGain(entry.mic_gain_db)
         setSidetone(entry.sidetone)
@@ -55,11 +53,18 @@ export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
   }, [deviceId, eventId, run])
 
   const channels = event?.channels ?? []
-  const talkIds = keys.flatMap((k) => (k.channel_id != null && isTalk(k.mode) ? [k.channel_id] : []))
-  const memberIds = keys.flatMap((k) => (k.channel_id != null && k.mode !== 'off' ? [k.channel_id] : []))
+  const talkIds = keys.flatMap((k) => (k.channel_id != null && k.mode === 'talk' ? [k.channel_id] : []))
+  const memberIds = keys.flatMap((k) => (k.channel_id != null ? [k.channel_id] : []))
   const pttChannels = channels.filter((c) => talkIds.includes(c.id))
   const callChannels = channels.filter((c) => memberIds.includes(c.id))
+  const pttValue = ptt != null && talkIds.includes(ptt) ? ptt : null
   const callValue = callCh != null && memberIds.includes(callCh) ? callCh : null
+  // The wearer can remap the headset PTT on the beltpack; that sticks until the PTT is changed here.
+  const beltpackPtt = device?.state?.ptt_channel_id
+  const remappedTo =
+    event?.active && device?.online && device.in_sync && beltpackPtt !== undefined && beltpackPtt !== savedPtt
+      ? (channels.find((c) => c.id === beltpackPtt)?.name ?? 'nothing')
+      : null
 
   const setKey = (i: number, patch: Partial<KeyConfig>) =>
     setKeys(keys.map((k, j) => (j === i ? { ...k, ...patch } : k)))
@@ -79,7 +84,7 @@ export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
         name,
         label,
         keys,
-        ptt_channel_ids: ptt.filter((c) => talkIds.includes(c)),
+        ptt_channel_id: pttValue,
         call_channel_id: callValue,
         mic_gain_db: micGain,
         sidetone,
@@ -201,23 +206,27 @@ export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
             </table>
 
             <div className="grid2">
-              <fieldset>
-                <legend>Headset PTT talks on</legend>
-                {pttChannels.length === 0 && (
-                  <span className="muted small">Put a key on a talk &amp; listen channel first.</span>
-                )}
-                {pttChannels.map((c) => (
-                  <label key={c.id} className="check">
-                    <input
-                      type="checkbox"
-                      checked={ptt.includes(c.id)}
-                      onChange={(e) => setPtt(e.target.checked ? [...ptt, c.id] : ptt.filter((x) => x !== c.id))}
-                    />
-                    {c.name}
-                  </label>
-                ))}
-              </fieldset>
               <div>
+                <label>
+                  Headset PTT talks on
+                  <select value={pttValue ?? ''} onChange={(e) => setPtt(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">— nothing —</option>
+                    {pttChannels.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {pttChannels.length === 0 && (
+                  <p className="muted small">Put a key on a talk &amp; listen channel first.</p>
+                )}
+                {remappedTo && (
+                  <p className="note info small">
+                    The wearer remapped it to {remappedTo} on the beltpack. Choosing a different channel here replaces
+                    that.
+                  </p>
+                )}
                 <label>
                   Call button alerts
                   <select
@@ -232,6 +241,8 @@ export default function DeviceEditor({ deviceId, event, onClose, run }: Props) {
                     ))}
                   </select>
                 </label>
+              </div>
+              <div>
                 <label className="range">
                   Mic gain <span>{micGain} dB</span>
                   <input
