@@ -105,7 +105,7 @@ Behaviour, configured in the portal:
 - Radio RX feeds the mapped channel while COR is active (or the VOX threshold is exceeded).
 - Anyone talking on the mapped channel keys the radio's PTT, with a configurable hang time.
 - **Half-duplex rules:** don't key PTT while COR is active (configurable priority), plus a transmit time-out timer.
-- The server sends the radio a **mix-minus**: everything on the channel except the radio's own audio. This prevents loops.
+- The relay never sends the radio port its own audio, so the base station mixes only the other talkers on the channel into the radio's TX. This prevents loops.
 
 ### 2. 4-wire balanced (RJ45)
 
